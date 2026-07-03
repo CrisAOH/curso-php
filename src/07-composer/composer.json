@@ -1,0 +1,18 @@
+{
+  "name": "albertohernndez/07-composer",
+  "description": "Proyecto para demostrar el uso de composer",
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  },
+  "authors": [
+    {
+      "name": "Cristhian Ortega",
+      "email": "cristhian.aprendizaje@outlook.com"
+    }
+  ],
+  "require": {
+    "ajaz/random-quotes-generator-php": "^1.0"
+  }
+}
