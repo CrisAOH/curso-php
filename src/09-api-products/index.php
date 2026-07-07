@@ -1,62 +1,107 @@
 <?php
 
 declare(strict_types=1);
+require_once "Database.php";
+require_once "ProductRepository.php";
+require_once "Helpers.php";
+
 header("Content-Type: application/json; charset=utf-8");
 
-$method = $_SERVER["REQUEST_METHOD"] ?? "GET";
-$uriPath = parse_url($_SERVER["REQUEST_URI"] ?? "/", PHP_URL_PATH) ?? "/";
-$segments = array_values(array_filter(explode("/", trim($uriPath, "/"))));
+try {
+    $pdo = getConnection();
 
-function resolveRoute(array $segments): array
-{
-    $pos = array_search("products", $segments, true);
+    $method = $_SERVER["REQUEST_METHOD"] ?? "GET";
+    $uriPath = parse_url($_SERVER["REQUEST_URI"] ?? "/", PHP_URL_PATH) ?? "/";
+    $segments = array_values(array_filter(explode("/", trim($uriPath, "/"))));
 
-    if ($pos === false) {
-        return [null, null];
+    [$resource, $resourceId] = resolveRoute($segments);
+    if ($resource !== "products") {
+        respondError(404, "Recurso no encontrado. Usa /products.");
     }
 
-    $resource = "products";
-    $id = $segments[$pos + 1] ?? null;
+    if ($method === "GET" && $resourceId === null) {
+        $products = getAllProducts($pdo);
+        respondJson(200, $products);
+    }
 
-    if ($id !== null) {
-        if (!ctype_digit($id)) {
-            respondError(400, "El ID debe ser numérico.");
+    if ($method === "GET" && $resourceId !== null) {
+        if ($resourceId <= 0) {
+            respondError(400, "El ID debe ser un número válido.");
         }
 
-        return [$resource, (int)$id];
+        $product = getProductById($pdo, $resourceId);
+        if ($product === null) {
+            respondError(404, "Producto no encontrado");
+        }
+        respondJson(200, $product);
     }
 
-    return [$resource, null];
-}
+    if ($method === "POST" && $resourceId === null) {
+        $payload = readJsonBody();
+        $errors = validateProductPayload($payload, true);
 
-function respondJson(int $statusCode, $payload): void
-{
-    http_response_code($statusCode);
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
+        if (count($errors) > 0) {
+            respondJson(422, ["errors" => $errors]);
+        }
 
-function respondError(int $statusCode, string $message): void
-{
-    respondJson($statusCode, ["error" => $message]);
-}
+        $newId = createProduct($pdo, $payload);
+        $newProduct = getProductById($pdo, $newId);
 
-function readJsonBody(): array
-{
-    $raw = file_get_contents("php://input");
-
-    if ($raw === false || trim($raw) === ' ') {
-        respondError(400, "El cuerpo de la petición está vacío.");
+        respondJson(201, ["message" => "Producto creado correctamente", "data" => $newProduct]);
     }
 
-    $data = json_decode($raw, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        respondError(400, "El json es inválido: " . json_last_error_msg());
+    if (($method === "PUT" || $method === "PATCH") && $resourceId !== null) {
+        if ($resourceId <= 0) {
+            respondError(400, "El ID debe ser un úmero válido.");
+        }
+
+        $existing = getProductById($pdo, $resourceId);
+
+        if ($existing === null) {
+            respondError(404, "Producto no encontrado.");
+        }
+
+        $payload = readJsonBody();
+        $isCreate = false;
+        $requireAllFields = ($method === "PUT");
+        $errors = validateProductPayload($payload, $isCreate, $requireAllFields);
+
+        if (count($errors) > 0) {
+            respondJson(422, ["errors" => $errors]);
+        }
+
+        $merged = mergedProductData($existing, $payload);
+
+        updateProduct($pdo, $resourceId, $merged);
+        $updated = getProductById($pdo, $resourceId);
+        respondJson(200, ["message" => "El producto se actulizó correctamente.", "data" => $updated]);
     }
 
-    if (!is_array($data)) {
-        respondError(400, "El JSON debe representar un objeto.");
-    }
+    if ($method === "DELETE" && $resourceId !== null) {
+        if ($resourceId <= 0) {
+            respondError(400, "El ID debe ser un número válido.");
+        }
 
-    return $data;
+        $existing = getProductById($pdo, $resourceId);
+        if ($existing === null) {
+            respondError(404, "Producto no encontrado");
+        }
+
+        $deleted = deleteProduct($pdo, $resourceId);
+
+        if (!$deleted) {
+            respondError(409, "No se pudo eliminar el producto.");
+        }
+
+        respondJson(200, ["message" => "Producto eliminado", "data" => $existing]);
+    }
+} catch (PDOException $ex) {
+    respondError(500, "Error de conexión: " . $ex->getMessage());
+} catch (Exception $ex) {
+    respondError(500, "Error interno: " . $ex->getMessage());
 }
+
+/*
+EJEMPLO DE URL PARA PETICIÓN:
+http://localhost/api-products/products/ (api-products es el nombre de la carpeta ubicada en www)
+*/
